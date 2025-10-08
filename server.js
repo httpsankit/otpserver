@@ -73,6 +73,37 @@ app.post('/getMsg', async (req, res) => {
   }
 });
 
+// ✅ Endpoint to mark OTP as used
+app.post('/setTrue', async (req, res) => {
+  const { username, otp } = req.body;
+
+  if (!username || !otp) {
+    return res.status(400).json({ error: 'Missing username or otp' });
+  }
+
+  try {
+    const query = `
+      UPDATE otp
+      SET "isUsed" = true
+      WHERE username = $1 AND otp = $2
+      RETURNING *;
+    `;
+
+    const result = await pool.query(query, [username, otp]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No matching OTP found for this user' });
+    }
+
+    console.log(`✅ OTP marked as used for user: ${username}, otp: ${otp}`);
+    res.json({ message: 'OTP marked as used', data: result.rows[0] });
+  } catch (err) {
+    console.error('❌ Database error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+
 
 // ✅ Health check
 app.get('/', (req, res) => res.send('OTP backend running 🚀'));

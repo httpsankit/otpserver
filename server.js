@@ -15,7 +15,7 @@ const pool = new Pool({
   database: 'postgres',
 });
 
-// Endpoint to save OTP
+// ✅ Endpoint to save OTP
 app.post('/save-otp', async (req, res) => {
   const { username, otp, sender, isUsed } = req.body;
 
@@ -41,7 +41,41 @@ app.post('/save-otp', async (req, res) => {
   }
 });
 
-// Health check
-app.get('/', (req, res) => res.send('OTP backend running'));
 
+// ✅ Endpoint to get latest unused OTP
+app.post('/getMsg', async (req, res) => {
+  const { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: 'Missing username' });
+  }
+
+  try {
+    const query = `
+      SELECT otp 
+      FROM otp
+      WHERE username = $1 AND "isUsed" = false
+      ORDER BY "createdat" DESC
+      LIMIT 1;
+    `;
+
+    const result = await pool.query(query, [username]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No unused OTP found for this user' });
+    }
+
+    console.log(`📩 Latest OTP fetched for user: ${username}`);
+    res.json(result.rows[0].otp);
+  } catch (err) {
+    console.error('❌ Database error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+
+// ✅ Health check
+app.get('/', (req, res) => res.send('OTP backend running 🚀'));
+
+// ✅ Start server
 app.listen(3000, () => console.log('🚀 Server running on port 3000'));

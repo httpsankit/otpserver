@@ -1,1 +1,1 @@
-{ "url": "otpserver-uvln.onrender.com/save-otp" }
+{ "url": "https://otpserver-uvln.onrender.com/save-otp" }

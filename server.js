@@ -73,7 +73,6 @@ app.post('/getMsg', async (req, res) => {
   }
 });
 
-// ✅ Endpoint to mark OTP as used
 app.post('/setTrue', async (req, res) => {
   const { username, otp } = req.body;
 
@@ -85,7 +84,9 @@ app.post('/setTrue', async (req, res) => {
     const query = `
       UPDATE otp
       SET "isUsed" = true
-      WHERE username = $1 AND otp = $2
+      WHERE username = $1
+        AND otp ILIKE '%' || $2 || '%'
+        AND sender ILIKE '%BRGOVT%'
       RETURNING *;
     `;
 
@@ -95,8 +96,8 @@ app.post('/setTrue', async (req, res) => {
       return res.status(404).json({ message: 'No matching OTP found for this user' });
     }
 
-    console.log(`✅ OTP marked as used for user: ${username}, otp: ${otp}`);
-    res.json({ message: 'OTP marked as used', data: result.rows[0] });
+    console.log(`✅ OTP marked as used for user: ${username}, otp contains: ${otp}`);
+    res.json({ message: 'OTP marked as used', data: result.rows });
   } catch (err) {
     console.error('❌ Database error:', err);
     res.status(500).json({ error: 'DB error' });
@@ -105,8 +106,10 @@ app.post('/setTrue', async (req, res) => {
 
 
 
+
 // ✅ Health check
 app.get('/', (req, res) => res.send('OTP backend running 🚀'));
 
 // ✅ Start server
 app.listen(3000, () => console.log('🚀 Server running on port 3000'));
+

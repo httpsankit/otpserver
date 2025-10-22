@@ -1,1 +1,3 @@
-{ "url": "https://otpserver-uvln.onrender.com/save-otp" }
+{ "url": "https://otp.instadl.in/save-otp",
+"baseUrl": "https://otp.instadl.in"
+}

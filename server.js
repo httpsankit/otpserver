@@ -524,6 +524,82 @@ app.post('/aadhar/amounttxnsdata', async (req, res) => {
 });
 
 
+app.post('/aadhar/getDataWithImages', async (req, res) => {
+  try {
+    const { id, username } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username) {
+      return res.status(400).json({ error: 'Missing required fields: id, username' });
+    }
+
+    // ✅ Query only processing records
+    const query = `
+      SELECT *
+      FROM aadhardata
+      WHERE userid = $1 AND username = $2 AND status = 'processing'
+      ORDER BY createdat DESC;
+    `;
+    const result = await pool.query(query, [id, username]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No processing Aadhar data found for this user.' });
+    }
+
+    // ✅ Convert image files to base64 and attach them to response
+    const dataWithImages = result.rows.map((row) => {
+      const imageFields = ['pic1path', 'pic2path', 'pic3path', 'pic4path', 'pic5path'];
+      const images = {};
+
+      imageFields.forEach((field) => {
+        if (row[field]) {
+          const imagePath = path.join(__dirname, 'images', row[field]);
+          try {
+            if (fs.existsSync(imagePath)) {
+              const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+              images[field.replace('path', '')] = `data:image/jpeg;base64,${imageData}`;
+            } else {
+              images[field.replace('path', '')] = null;
+            }
+          } catch (err) {
+            console.error(`❌ Error reading image ${field}:`, err);
+            images[field.replace('path', '')] = null;
+          }
+        } else {
+          images[field.replace('path', '')] = null;
+        }
+      });
+
+      return {
+        userid: row.userid,
+        username: row.username,
+        aadharno: row.aadharno,
+        name: row.name,
+        mobile: row.mobile,
+        state: row.state,
+        distributorid: row.distributorid,
+        status: row.status,
+        remarks: row.remarks,
+        createdat: row.createdat,
+        updatedat: row.updatedat,
+        images // ✅ all images as base64 strings
+      };
+    });
+
+    // ✅ Return result
+    res.json({
+      message: 'Processing Aadhar data with images fetched successfully',
+      count: dataWithImages.length,
+      data: dataWithImages
+    });
+  } catch (err) {
+    console.error('❌ Error fetching Aadhar data with images:', err);
+    res.status(500).json({ error: 'Internal server error while fetching data with images' });
+  }
+});
+
+
+
 
 // ===================== Health Check =====================
 app.get('/', (req, res) => res.send('OTP backend running 🚀'));

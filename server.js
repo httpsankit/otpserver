@@ -1,12 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
-app.use(express.json()); // express has body parser built-in
+app.use(express.json()); // for application/json
 
-// Postgres connection
+// ✅ PostgreSQL connection
 const pool = new Pool({
   host: 'aws-1-ap-south-1.pooler.supabase.com',
   port: 6543,
@@ -15,13 +18,29 @@ const pool = new Pool({
   database: 'postgres',
 });
 
-// Endpoint to save OTP
+// ✅ Ensure images folder exists
+const imagesDir = path.join(__dirname, 'images');
+if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
+
+// ✅ Multer config for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, imagesDir);
+  },
+  filename: function (req, file, cb) {
+    const userid = req.body.userid || 'user';
+    const ext = path.extname(file.originalname);
+    cb(null, `${userid}_${Date.now()}_${file.fieldname}${ext}`);
+  }
+});
+const upload = multer({ storage });
+
+// ===================== OTP Endpoints =====================
+
+// Save OTP
 app.post('/save-otp', async (req, res) => {
   const { username, otp, sender, isUsed } = req.body;
-
-  if (!username || !otp) {
-    return res.status(400).json({ error: 'Missing username or otp' });
-  }
+  if (!username || !otp) return res.status(400).json({ error: 'Missing username or otp' });
 
   try {
     const query = `
@@ -29,19 +48,485 @@ app.post('/save-otp', async (req, res) => {
       VALUES ($1, $2, $3, $4)
       RETURNING *;
     `;
-
     const values = [username, otp, sender || null, isUsed || false];
-
     const result = await pool.query(query, values);
     console.log(`✅ Saved OTP for user: ${username}, otp: ${otp}`);
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('❌ Database error:', err);
+    console.error('❌ DB error:', err);
     res.status(500).json({ error: 'DB error' });
   }
 });
 
-// Health check
-app.get('/', (req, res) => res.send('OTP backend running'));
+// Get latest unused OTP
+app.post('/getMsg', async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'Missing username' });
 
+  try {
+    const query = `
+      SELECT otp 
+      FROM otp
+      WHERE username = $1 AND "isUsed" = false
+      ORDER BY "createdat" DESC
+      LIMIT 1;
+    `;
+    const result = await pool.query(query, [username]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'No unused OTP found' });
+
+    console.log(`📩 Latest OTP fetched for user: ${username}`);
+    res.json(result.rows[0].otp);
+  } catch (err) {
+    console.error('❌ DB error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+// Mark OTP as used
+app.post('/setTrue', async (req, res) => {
+  const { username, otp } = req.body;
+  if (!username || !otp) return res.status(400).json({ error: 'Missing username or otp' });
+
+  try {
+    const query = `
+      UPDATE otp
+      SET "isUsed" = true
+      WHERE username = $1 AND otp = $2
+      RETURNING *;
+    `;
+    const result = await pool.query(query, [username, otp]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'No matching OTP found' });
+
+    console.log(`✅ OTP marked as used for user: ${username}, otp: ${otp}`);
+    res.json({ message: 'OTP marked as used', data: result.rows[0] });
+  } catch (err) {
+    console.error('❌ DB error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+// ===================== Live Amount Endpoint =====================
+app.post('/aadhar/liveamount', async (req, res) => {
+  const { amount, utrno, txndate } = req.body;
+  if (!amount || !utrno || !txndate) return res.status(400).json({ error: 'Missing fields' });
+
+  try {
+    const query = `
+      INSERT INTO liveamount (amount, utrno, txndate)
+      VALUES ($1, $2, $3)
+      RETURNING *;
+    `;
+    const result = await pool.query(query, [amount, utrno, txndate]);
+    console.log(`💸 Live amount added: ₹${amount}, UTR: ${utrno}`);
+    res.json({ message: 'Live amount saved', data: result.rows[0] });
+  } catch (err) {
+    console.error('❌ DB error:', err);
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+// ===================== Aadhar Save Data (with balance check + image upload) =====================
+app.post('/aadhar/saveData', upload.fields([
+  { name: 'pic1', maxCount: 1 },
+  { name: 'pic2', maxCount: 1 },
+  { name: 'pic3', maxCount: 1 },
+  { name: 'pic4', maxCount: 1 },
+  { name: 'pic5', maxCount: 1 }
+]), async (req, res) => {
+  const client = await pool.connect(); // ✅ To use transaction
+  try {
+    const { userid, username, aadharno, name, mobile, state, distributorid } = req.body;
+
+    if (!userid || !username || !aadharno || !name || !mobile || !state || !distributorid) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // ✅ Extract file paths
+    const pic1path = req.files.pic1 ? req.files.pic1[0].filename : null;
+    const pic2path = req.files.pic2 ? req.files.pic2[0].filename : null;
+    const pic3path = req.files.pic3 ? req.files.pic3[0].filename : null;
+    const pic4path = req.files.pic4 ? req.files.pic4[0].filename : null;
+    const pic5path = req.files.pic5 ? req.files.pic5[0].filename : null;
+
+    // ✅ Begin transaction
+    await client.query('BEGIN');
+
+    // 1️⃣ Get user balance from aadhar_users
+    const userRes = await client.query(
+      'SELECT balance FROM aadhar_users WHERE id = $1 AND username = $2',
+      [userid, username]
+    );
+
+    if (userRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userBalance = parseFloat(userRes.rows[0].balance) || 0;
+
+    // 2️⃣ Get aadharamount from msg table (assume latest record)
+    const msgRes = await client.query('SELECT aadharamount FROM msg ORDER BY currentversion DESC LIMIT 1');
+    const aadharAmount = parseFloat(msgRes.rows[0]?.aadharamount) || 0;
+
+    // 3️⃣ Check balance
+    const newBalance = userBalance - aadharAmount;
+    if (newBalance < 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient balance. Please recharge your account.' });
+    }
+
+    // 4️⃣ Save Aadhar data
+    const insertQuery = `
+      INSERT INTO aadhardata (
+        userid, username, aadharno, "name", mobile, state, distributorid,
+        pic1path, pic2path, pic3path, pic4path, pic5path
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING *;
+    `;
+    const insertValues = [userid, username, aadharno, name, mobile, state, distributorid,
+      pic1path, pic2path, pic3path, pic4path, pic5path];
+    const aadharRes = await client.query(insertQuery, insertValues);
+
+    // 5️⃣ Update user balance
+    await client.query(
+      'UPDATE aadhar_users SET balance = $1 WHERE id = $2 AND username = $3',
+      [newBalance, userid, username]
+    );
+
+    // ✅ Commit transaction
+    await client.query('COMMIT');
+
+    console.log(`✅ Aadhar data saved for user: ${username} | Amount deducted: ${aadharAmount}`);
+    res.json({
+      message: 'Aadhar data saved successfully',
+      deducted: aadharAmount,
+      remaining_balance: newBalance,
+      data: aadharRes.rows[0]
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Error saving Aadhar data:', err);
+    res.status(500).json({ error: 'Database error' });
+  } finally {
+    client.release();
+  }
+});
+
+// ✅ Aadhar: loginCheck
+app.post('/aadhar/loginCheck', async (req, res) => {
+  const { username, password, processorid } = req.body;
+
+  // ✅ Check all required fields
+  if (!username || !password || !processorid) {
+    return res.status(400).json({
+      error: 'Missing required fields: username, password, processorid'
+    });
+  }
+
+  try {
+    // Step 1️⃣: Check if user exists with given username & password
+    const userCheckQuery = `
+      SELECT * 
+      FROM aadhar_users
+      WHERE username = $1 AND password = $2
+      LIMIT 1;
+    `;
+    const userResult = await pool.query(userCheckQuery, [username, password]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({
+        message: 'Invalid username or password'
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Step 2️⃣: If processorid is NULL → bind it (first login)
+    if (!user.processorid || user.processorid === null) {
+      const updateQuery = `
+        UPDATE aadhar_users
+        SET processorid = $1
+        WHERE username = $2 AND password = $3
+        RETURNING *;
+      `;
+      const updateResult = await pool.query(updateQuery, [processorid, username, password]);
+
+      console.log(`✅ First login — ProcessorID bound for user: ${username}`);
+      return res.json({
+        message: 'First login successful — processor ID linked successfully',
+        user: updateResult.rows[0]
+      });
+    }
+
+    // Step 3️⃣: If already has processorid → verify match
+    if (user.processorid !== processorid) {
+      return res.status(401).json({
+        message: 'Processor ID mismatch — access denied'
+      });
+    }
+
+    // Step 4️⃣: Valid user and matching processor ID
+    console.log(`✅ Login success for ${username} (ProcessorID: ${processorid})`);
+    res.json({
+      message: 'Login successful',
+      user
+    });
+
+  } catch (err) {
+    console.error('❌ Database error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// getmsg
+app.get('/aadhar/getmsgaadhar', async (req, res) => {
+  try {
+    const query = `
+      SELECT *
+      FROM msg
+      ORDER BY currentversion ASC
+      LIMIT 1
+    `;
+    const { rows } = await pool.query(query);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'No message found' });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error fetching message:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===================== Get Aadhar Data (by userid and username) =====================
+app.post('/aadhar/getDataAadhar', async (req, res) => {
+  try {
+    const { userid, username } = req.body;
+
+    // ✅ Validate required fields
+    if (!userid || !username) {
+      return res.status(400).json({ error: 'Missing required fields: userid or username' });
+    }
+
+    // ✅ Fetch data from aadhardata table
+    const query = `
+      SELECT 
+        userid, username, aadharno, name, mobile, state, distributorid,
+        createdat, status, remarks, updatedat
+      FROM aadhardata
+      WHERE userid = $1 AND username = $2
+      ORDER BY createdat DESC;
+    `;
+    const values = [userid, username];
+    const result = await pool.query(query, values);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No Aadhar data found for this user' });
+    }
+
+    // ✅ Return all records
+    res.json({
+      message: 'Aadhar data fetched successfully',
+      count: result.rowCount,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching Aadhar data:', err);
+    res.status(500).json({ error: 'Database error while fetching Aadhar data' });
+  }
+});
+
+
+// ===================== Aadhar Recharge API =====================
+app.post('/aadhar/recharge', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { amount, utr, id, username, processorid } = req.body;
+
+    // ✅ 1. Validate input
+    if (!amount || !utr || !id || !username || !processorid) {
+      return res.status(400).json({ error: 'Missing required fields: amount, utr, id, username, processorid' });
+    }
+
+    await client.query('BEGIN'); // Start transaction
+
+    // ✅ 2. Fetch user (to get distributorid)
+    const userQuery = `
+      SELECT * FROM aadhar_users
+      WHERE id = $1 AND username = $2
+      LIMIT 1
+    `;
+    const userResult = await client.query(userQuery, [id, username]);
+
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found in aadhar_users' });
+    }
+
+    const { createdby } = userResult.rows[0];
+    const distributorid = createdby;
+
+    // ✅ 3. Insert record in amounttxnsdata immediately (remarks = pending)
+    const insertTxn = `
+      INSERT INTO amounttxnsdata (userid, username, distributorid, amount, utrno, remarks)
+      VALUES ($1, $2, $3, $4, $5, 'pending')
+    `;
+    await client.query(insertTxn, [id, username, distributorid, amount, utr]);
+
+    // ✅ 4. Check liveamount record
+    const checkLive = `
+      SELECT * FROM liveamount
+      WHERE amount = $1 AND utrno = $2 AND isused = false
+      LIMIT 1
+    `;
+    const liveResult = await client.query(checkLive, [amount, utr]);
+
+    if (liveResult.rowCount === 0) {
+      // ❌ Invalid or already used UTR
+      await client.query(
+        `UPDATE amounttxnsdata SET remarks = 'failed - invalid or used UTR' WHERE utrno = $1`,
+        [utr]
+      );
+      await client.query('COMMIT');
+      return res.status(400).json({ error: 'Invalid UTR or amount not found in liveamount / already used' });
+    }
+
+    // ✅ 5. Update aadhar_users balance
+    const updateBalance = `
+      UPDATE aadhar_users
+      SET balance = balance + $1
+      WHERE id = $2 AND username = $3 AND processorid = $4
+      RETURNING balance
+    `;
+    const balanceResult = await client.query(updateBalance, [amount, id, username, processorid]);
+
+    if (balanceResult.rowCount === 0) {
+      await client.query(
+        `UPDATE amounttxnsdata SET remarks = 'failed - user not found while updating balance' WHERE utrno = $1`,
+        [utr]
+      );
+      await client.query('COMMIT');
+      return res.status(404).json({ error: 'User not found while updating balance' });
+    }
+
+    const newBalance = balanceResult.rows[0].balance;
+
+    // ✅ 6. Mark liveamount as used
+    await client.query(
+      `UPDATE liveamount SET isused = true, updatedat = now() WHERE utrno = $1 AND amount = $2`,
+      [utr, amount]
+    );
+
+    // ✅ 7. Update remarks to success
+    await client.query(
+      `UPDATE amounttxnsdata SET remarks = 'success' WHERE utrno = $1`,
+      [utr]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      message: 'Recharge successful',
+      credited_amount: amount,
+      new_balance: newBalance
+    });
+
+  } catch (err) {
+    console.error('❌ Recharge Error:', err);
+
+    // 🩶 Update remarks to error message
+    if (req.body?.utr) {
+      await pool.query(
+        `UPDATE amounttxnsdata SET remarks = $1 WHERE utrno = $2`,
+        ['failed - ' + err.message, req.body.utr]
+      );
+    }
+
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Internal server error during recharge' });
+  } finally {
+    client.release();
+  }
+});
+
+
+
+
+// ✅ POST API: /aadhar/getAvailableBalance
+app.post('/aadhar/getAvailableBalance', async (req, res) => {
+  try {
+    const { id, username, processorid } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username || !processorid) {
+      return res.status(400).json({ error: 'Missing required fields: id, username, processorid' });
+    }
+
+    // ✅ Query the aadhar_users table
+    const query = `
+      SELECT balance
+      FROM aadhar_users
+      WHERE id = $1 AND username = $2 AND processorid = $3
+      LIMIT 1
+    `;
+    const values = [id, username, processorid];
+
+    const result = await pool.query(query, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    return res.json({ amount: result.rows[0].balance });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/aadhar/amounttxnsdata', async (req, res) => {
+  try {
+    const { id, username } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username) {
+      return res.status(400).json({ error: 'Missing required fields: id, username' });
+    }
+
+    // ✅ Fetch all transactions for the given user
+    const query = `
+      SELECT userid, username, distributorid, amount, utrno, createdat, remarks
+      FROM amounttxnsdata
+      WHERE userid = $1 AND username = $2
+      ORDER BY createdat DESC
+    `;
+    const result = await pool.query(query, [id, username]);
+
+    // ✅ If no records found
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No transaction records found for this user.' });
+    }
+
+    // ✅ Return all rows
+    res.json({
+      total_records: result.rowCount,
+      transactions: result.rows
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching amounttxnsdata:', err);
+    res.status(500).json({ error: 'Internal server error while fetching transaction data' });
+  }
+});
+
+
+
+// ===================== Health Check =====================
+app.get('/', (req, res) => res.send('OTP backend running 🚀'));
+
+// ===================== Start Server =====================
 app.listen(3000, () => console.log('🚀 Server running on port 3000'));

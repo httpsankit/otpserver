@@ -18,6 +18,16 @@ const pool = new Pool({
   database: 'postgres',
 });
 
+// ✅ Additional PostgreSQL connection for VLEHUB (kanak_kanak DB)
+const vlehubPool = new Pool({
+  host: 'osk.domcloud.co',
+  user: 'kanak',
+  password: 'dY+rNW4e2(Vz41Ch2+',
+  database: 'kanak_kanak',
+  port: 5432, // default PostgreSQL port
+});
+
+
 // ✅ Ensure images folder exists
 const imagesDir = path.join(__dirname, 'images');
 if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir);
@@ -452,6 +462,98 @@ app.post('/aadhar/recharge', async (req, res) => {
     client.release();
   }
 });
+
+
+// vlehub reacherge api =====================
+app.post('/vlehub/recharge', async (req, res) => {
+  const clientSupabase = await pool.connect();      // Supabase
+  const clientVlehub = await vlehubPool.connect();  // kanak_kanak DB
+
+  try {
+    const { username, processorid, utr, amount } = req.body;
+
+    // ✅ Validate input
+    if (!username || !processorid || !utr || !amount) {
+      return res.status(400).json({ error: 'Missing required fields: username, processorid, utr, amount' });
+    }
+
+    // ✅ 1️⃣ Check if user exists in kanak_kanak.users
+    const userQuery = `
+      SELECT * FROM users 
+      WHERE username = $1 AND processor_id = $2 AND activate = true
+      LIMIT 1;
+    `;
+    const userResult = await clientVlehub.query(userQuery, [username, processorid]);
+
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found in kanak_kanak database' });
+    }
+
+    const user = userResult.rows[0];
+
+    // ✅ Begin transaction in both DBs
+    await clientSupabase.query('BEGIN');
+    await clientVlehub.query('BEGIN');
+
+    // ✅ 2️⃣ Check if UTR and amount exist in Supabase liveamount
+    const liveQuery = `
+      SELECT * FROM liveamount 
+      WHERE amount = $1 AND utrno = $2 AND isused = false
+      LIMIT 1;
+    `;
+    const liveResult = await clientSupabase.query(liveQuery, [amount, utr]);
+
+    if (liveResult.rowCount === 0) {
+      await clientSupabase.query('ROLLBACK');
+      await clientVlehub.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid or already used UTR' });
+    }
+
+    // ✅ 3️⃣ Mark liveamount as used
+    await clientSupabase.query(
+      `UPDATE liveamount SET isused = true, updatedat = now() WHERE utrno = $1`,
+      [utr]
+    );
+
+    // ✅ 4️⃣ Update user’s total_amount in kanak_kanak.users
+    const newTotalAmount = (user.total_amount || 0) + parseInt(amount);
+    const updateUserQuery = `
+      UPDATE users 
+      SET total_amount = $1, updated_at = now()
+      WHERE username = $2 AND processor_id = $3
+      RETURNING total_amount;
+    `;
+    const updateResult = await clientVlehub.query(updateUserQuery, [newTotalAmount, username, processorid]);
+
+    // ✅ Commit both transactions
+    await clientSupabase.query('COMMIT');
+    await clientVlehub.query('COMMIT');
+
+    console.log(`✅ Recharge successful for ${username}, Amount: ₹${amount}`);
+
+    res.json({
+      message: 'Recharge successful',
+      username,
+      utr,
+      credited_amount: amount,
+      new_total_amount: updateResult.rows[0].total_amount
+    });
+
+  } catch (err) {
+    console.error('❌ VLEHUB Recharge Error:', err);
+
+    try {
+      await clientSupabase.query('ROLLBACK');
+      await clientVlehub.query('ROLLBACK');
+    } catch (_) {}
+
+    res.status(500).json({ error: 'Internal server error during VLEHUB recharge' });
+  } finally {
+    clientSupabase.release();
+    clientVlehub.release();
+  }
+});
+
 
 
 

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
-const TARGET_URL = 'https://pay.google.com/gp/w/u/0/home/activity';
+const TARGET_URL = 'https://pay.google.com/g4b';
 const USER_DATA_DIR = path.resolve('./chrome_user_data');  // persistent profile
 const INTERVAL_MS = 5000; // 5 seconds (same as C# version)
 const API_ENDPOINT = 'https://otp.instadl.in/aadhar/liveamount';

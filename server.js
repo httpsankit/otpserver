@@ -464,6 +464,269 @@ app.post('/aadhar/recharge', async (req, res) => {
 });
 
 
+// ✅ POST API: /aadhar/getAvailableBalance
+app.post('/aadhar/getAvailableBalance', async (req, res) => {
+  try {
+    const { id, username, processorid } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username || !processorid) {
+      return res.status(400).json({ error: 'Missing required fields: id, username, processorid' });
+    }
+
+    // ✅ Query the aadhar_users table
+    const query = `
+      SELECT balance
+      FROM aadhar_users
+      WHERE id = $1 AND username = $2 AND processorid = $3
+      LIMIT 1
+    `;
+    const values = [id, username, processorid];
+
+    const result = await pool.query(query, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    return res.json({ amount: result.rows[0].balance });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/aadhar/amounttxnsdata', async (req, res) => {
+  try {
+    const { id, username } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username) {
+      return res.status(400).json({ error: 'Missing required fields: id, username' });
+    }
+
+    // ✅ Fetch all transactions for the given user
+    const query = `
+      SELECT userid, username, distributorid, amount, utrno, createdat, remarks
+      FROM amounttxnsdata
+      WHERE userid = $1 AND username = $2
+      ORDER BY createdat DESC
+    `;
+    const result = await pool.query(query, [id, username]);
+
+    // ✅ If no records found
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No transaction records found for this user.' });
+    }
+
+    // ✅ Return all rows
+    res.json({
+      total_records: result.rowCount,
+      transactions: result.rows
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching amounttxnsdata:', err);
+    res.status(500).json({ error: 'Internal server error while fetching transaction data' });
+  }
+});
+
+
+app.post('/aadhar/getDataWithImages', async (req, res) => {
+  try {
+    const { sl_no } = req.body;
+
+    // ✅ Validate input
+    if (!sl_no) {
+      return res.status(400).json({ error: 'Missing required fields:serial no' });
+    }
+
+    // ✅ Query only processing records
+    const query = `
+      SELECT *
+      FROM aadhardata
+      WHERE sl_no = $1 and status = 'processing'
+    `;
+    const result = await pool.query(query, [sl_no]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No processing Aadhar data found for this user.' });
+    }
+
+    // ✅ Convert image files to base64 and attach them to response
+    const dataWithImages = result.rows.map((row) => {
+      const imageFields = ['pic1path', 'pic2path', 'pic3path', 'pic4path', 'pic5path'];
+      const images = {};
+
+      imageFields.forEach((field) => {
+        if (row[field]) {
+          const imagePath = path.join(__dirname, 'images', row[field]);
+          try {
+            if (fs.existsSync(imagePath)) {
+              const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+              images[field.replace('path', '')] = `data:image/jpeg;base64,${imageData}`;
+            } else {
+              images[field.replace('path', '')] = null;
+            }
+          } catch (err) {
+            console.error(`❌ Error reading image ${field}:`, err);
+            images[field.replace('path', '')] = null;
+          }
+        } else {
+          images[field.replace('path', '')] = null;
+        }
+      });
+
+      return {
+        sl_no: row.sl_no,
+        userid: row.userid,
+        username: row.username,
+        aadharno: row.aadharno,
+        name: row.name,
+        mobile: row.mobile,
+        state: row.state,
+        distributorid: row.distributorid,
+        status: row.status,
+        remarks: row.remarks,
+        createdat: row.createdat,
+        updatedat: row.updatedat,
+        images // ✅ all images as base64 strings
+      };
+    });
+
+    // ✅ Return result
+    res.json({
+      message: 'Processing Aadhar data with images fetched successfully',
+      count: dataWithImages.length,
+      data: dataWithImages
+    });
+  } catch (err) {
+    console.error('❌ Error fetching Aadhar data with images:', err);
+    res.status(500).json({ error: 'Internal server error while fetching data with images' });
+  }
+});
+
+
+// get all data ////
+
+app.post('/aadhar/getAllPendingData', async (req, res) => {
+  try {
+    const { distributorid } = req.body;
+
+    // ✅ Validate input
+    if (!distributorid) {
+      return res.status(400).json({ error: 'Missing required field: distributorid' });
+    }
+
+    // ✅ Query all 'processing' records for given distributor
+    const query = `
+      SELECT *
+      FROM aadhardata
+      WHERE distributorid = $1 AND status = 'processing'
+      ORDER BY createdat ASC;
+    `;
+
+    const result = await pool.query(query, [distributorid]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No pending Aadhar data found for this distributor.' });
+    }
+
+    // ✅ Return the fetched data
+    res.json({
+      message: 'Pending Aadhar data fetched successfully.',
+      count: result.rowCount,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching pending Aadhar data:', err);
+    res.status(500).json({ error: 'Internal server error while fetching pending data.' });
+  }
+});
+
+
+
+app.post('/aadhar/getDataWithImages', async (req, res) => {
+  try {
+    const { id, username } = req.body;
+
+    // ✅ Validate input
+    if (!id || !username) {
+      return res.status(400).json({ error: 'Missing required fields: id, username' });
+    }
+
+    // ✅ Query only processing records
+    const query = `
+      SELECT *
+      FROM aadhardata
+      WHERE userid = $1 AND username = $2 AND status = 'processing'
+      ORDER BY createdat DESC;
+    `;
+    const result = await pool.query(query, [id, username]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No processing Aadhar data found for this user.' });
+    }
+
+    // ✅ Convert image files to base64 and attach them to response
+    const dataWithImages = result.rows.map((row) => {
+      const imageFields = ['pic1path', 'pic2path', 'pic3path', 'pic4path', 'pic5path'];
+      const images = {};
+
+      imageFields.forEach((field) => {
+        if (row[field]) {
+          const imagePath = path.join(__dirname, 'images', row[field]);
+          try {
+            if (fs.existsSync(imagePath)) {
+              const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+              images[field.replace('path', '')] = `data:image/jpeg;base64,${imageData}`;
+            } else {
+              images[field.replace('path', '')] = null;
+            }
+          } catch (err) {
+            console.error(`❌ Error reading image ${field}:`, err);
+            images[field.replace('path', '')] = null;
+          }
+        } else {
+          images[field.replace('path', '')] = null;
+        }
+      });
+
+      return {
+        userid: row.userid,
+        username: row.username,
+        aadharno: row.aadharno,
+        name: row.name,
+        mobile: row.mobile,
+        state: row.state,
+        distributorid: row.distributorid,
+        status: row.status,
+        remarks: row.remarks,
+        createdat: row.createdat,
+        updatedat: row.updatedat,
+        images // ✅ all images as base64 strings
+      };
+    });
+
+    // ✅ Return result
+    res.json({
+      message: 'Processing Aadhar data with images fetched successfully',
+      count: dataWithImages.length,
+      data: dataWithImages
+    });
+  } catch (err) {
+    console.error('❌ Error fetching Aadhar data with images:', err);
+    res.status(500).json({ error: 'Internal server error while fetching data with images' });
+  }
+});
+
+
+
+///////////////////////////////////////////
+//=======VLEHUB RECHARGE=================//
+///////////////////////////////////////////
+
 // vlehub reacherge api =====================
 app.post('/vlehub/recharge', async (req, res) => {
   const clientSupabase = await pool.connect();      // Supabase
@@ -554,157 +817,8 @@ app.post('/vlehub/recharge', async (req, res) => {
   }
 });
 
-
-
-
-
-// ✅ POST API: /aadhar/getAvailableBalance
-app.post('/aadhar/getAvailableBalance', async (req, res) => {
-  try {
-    const { id, username, processorid } = req.body;
-
-    // ✅ Validate input
-    if (!id || !username || !processorid) {
-      return res.status(400).json({ error: 'Missing required fields: id, username, processorid' });
-    }
-
-    // ✅ Query the aadhar_users table
-    const query = `
-      SELECT balance
-      FROM aadhar_users
-      WHERE id = $1 AND username = $2 AND processorid = $3
-      LIMIT 1
-    `;
-    const values = [id, username, processorid];
-
-    const result = await pool.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    return res.json({ amount: result.rows[0].balance });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/aadhar/amounttxnsdata', async (req, res) => {
-  try {
-    const { id, username } = req.body;
-
-    // ✅ Validate input
-    if (!id || !username) {
-      return res.status(400).json({ error: 'Missing required fields: id, username' });
-    }
-
-    // ✅ Fetch all transactions for the given user
-    const query = `
-      SELECT userid, username, distributorid, amount, utrno, createdat, remarks
-      FROM amounttxnsdata
-      WHERE userid = $1 AND username = $2
-      ORDER BY createdat DESC
-    `;
-    const result = await pool.query(query, [id, username]);
-
-    // ✅ If no records found
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'No transaction records found for this user.' });
-    }
-
-    // ✅ Return all rows
-    res.json({
-      total_records: result.rowCount,
-      transactions: result.rows
-    });
-
-  } catch (err) {
-    console.error('❌ Error fetching amounttxnsdata:', err);
-    res.status(500).json({ error: 'Internal server error while fetching transaction data' });
-  }
-});
-
-
-app.post('/aadhar/getDataWithImages', async (req, res) => {
-  try {
-    const { id, username } = req.body;
-
-    // ✅ Validate input
-    if (!id || !username) {
-      return res.status(400).json({ error: 'Missing required fields: id, username' });
-    }
-
-    // ✅ Query only processing records
-    const query = `
-      SELECT *
-      FROM aadhardata
-      WHERE userid = $1 AND username = $2 AND status = 'processing'
-      ORDER BY createdat DESC;
-    `;
-    const result = await pool.query(query, [id, username]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'No processing Aadhar data found for this user.' });
-    }
-
-    // ✅ Convert image files to base64 and attach them to response
-    const dataWithImages = result.rows.map((row) => {
-      const imageFields = ['pic1path', 'pic2path', 'pic3path', 'pic4path', 'pic5path'];
-      const images = {};
-
-      imageFields.forEach((field) => {
-        if (row[field]) {
-          const imagePath = path.join(__dirname, 'images', row[field]);
-          try {
-            if (fs.existsSync(imagePath)) {
-              const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
-              images[field.replace('path', '')] = `data:image/jpeg;base64,${imageData}`;
-            } else {
-              images[field.replace('path', '')] = null;
-            }
-          } catch (err) {
-            console.error(`❌ Error reading image ${field}:`, err);
-            images[field.replace('path', '')] = null;
-          }
-        } else {
-          images[field.replace('path', '')] = null;
-        }
-      });
-
-      return {
-        userid: row.userid,
-        username: row.username,
-        aadharno: row.aadharno,
-        name: row.name,
-        mobile: row.mobile,
-        state: row.state,
-        distributorid: row.distributorid,
-        status: row.status,
-        remarks: row.remarks,
-        createdat: row.createdat,
-        updatedat: row.updatedat,
-        images // ✅ all images as base64 strings
-      };
-    });
-
-    // ✅ Return result
-    res.json({
-      message: 'Processing Aadhar data with images fetched successfully',
-      count: dataWithImages.length,
-      data: dataWithImages
-    });
-  } catch (err) {
-    console.error('❌ Error fetching Aadhar data with images:', err);
-    res.status(500).json({ error: 'Internal server error while fetching data with images' });
-  }
-});
-
-
-
-
 // ===================== Health Check =====================
 app.get('/', (req, res) => res.send('OTP backend running 🚀'));
 
 // ===================== Start Server =====================
-app.listen(3000, () => console.log('🚀 Server running on port 3000'));
+app.listen(4000, () => console.log('🚀 Server running on port 4000'));

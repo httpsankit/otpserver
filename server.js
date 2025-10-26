@@ -808,6 +808,98 @@ app.post('/aadhar/uploadZip', uploadx.single('zipfile'), async (req, res) => {
   }
 });
 
+//aadhar reject // 
+
+
+app.post('/aadhar/reject', async (req, res) => {
+  const { sl_no } = req.body;
+
+  if (!sl_no) {
+    return res.status(400).json({ error: 'sl_no is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1️⃣ Get the record from aadhardata
+    const recordRes = await client.query(
+      `SELECT username FROM aadhardata WHERE sl_no = $1`,
+      [sl_no]
+    );
+
+    if (recordRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Record not found' });
+    }
+
+    const username = recordRes.rows[0].username;
+
+    // 2️⃣ Get aadharamount from msg table (latest row)
+    const msgRes = await client.query(
+      `SELECT aadharamount FROM msg ORDER BY currentversion DESC LIMIT 1`
+    );
+
+    if (msgRes.rowCount === 0 || msgRes.rows[0].aadharamount == null) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'No aadharamount found in msg table' });
+    }
+
+    const aadharAmount = Number(msgRes.rows[0].aadharamount);
+
+    // 3️⃣ Update aadhardata -> status = 'Reject'
+    await client.query(
+      `UPDATE aadhardata SET status = 'Reject' WHERE sl_no = $1`,
+      [sl_no]
+    );
+
+    // 4️⃣ Refund balance to user
+    await client.query(
+      `UPDATE aadhar_users SET balance = balance + $1 WHERE username = $2`,
+      [aadharAmount, username]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      message: 'Status updated to Reject and balance refunded',
+      sl_no,
+      username,
+      refunded_amount: aadharAmount,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error in /aadhar/reject:', error);
+    res.status(500).json({ error: 'Database error' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// 🔹 API: Mark Aadhar as Success
+app.post('/aadhar/markSuccess', async (req, res) => {
+  const { sl_no } = req.body;
+
+  if (!sl_no) {
+    return res.status(400).json({ error: 'sl_no is required' });
+  }
+
+  try {
+    const query = `UPDATE aadhardata SET status = 'Success' WHERE sl_no = $1`;
+    const result = await pool.query(query, [sl_no]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Record not found' });
+    }
+
+    res.json({ message: 'Status updated to Success', sl_no });
+  } catch (error) {
+    console.error('Error updating record:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 ///////////////////////////////////////////
 //=======VLEHUB RECHARGE=================//
 ///////////////////////////////////////////

@@ -4,6 +4,8 @@ const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const archiver = require('archiver');
+const AdmZip = require('adm-zip');
 
 const app = express();
 app.use(cors());
@@ -560,7 +562,7 @@ app.post('/aadhar/getDataWithImages', async (req, res) => {
 
       imageFields.forEach((field) => {
         if (row[field]) {
-          const imagePath = path.join(__dirname, 'images', row[field]);
+          const imagePath = path.join(__dirname, 'modifies_images', row[field]);
           try {
             if (fs.existsSync(imagePath)) {
               const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
@@ -721,7 +723,91 @@ app.post('/aadhar/getDataWithImages', async (req, res) => {
   }
 });
 
+app.get('/aadhar/allImages', async (req, res) => {
+  try {
+    const imagesDir = path.join(__dirname, 'images');
 
+    // ✅ Check if the folder exists
+    if (!fs.existsSync(imagesDir)) {
+      return res.status(404).json({ error: 'Images folder not found.' });
+    }
+
+    // ✅ Create a zip filename (optional: include timestamp)
+    const zipFileName = `aadhar_images_${Date.now()}.zip`;
+    const zipFilePath = path.join(__dirname, zipFileName);
+
+    // ✅ Create zip archive
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', () => {
+      console.log(`✅ Created ZIP: ${zipFileName} (${archive.pointer()} total bytes)`);
+
+      // ✅ Send the zip file for download
+      res.download(zipFilePath, zipFileName, (err) => {
+        // Delete the temporary zip file after sending
+        fs.unlink(zipFilePath, () => {});
+        if (err) {
+          console.error('❌ Error sending zip:', err);
+        }
+      });
+    });
+
+    archive.on('error', (err) => {
+      throw err;
+    });
+
+    // ✅ Pipe archive data to the file
+    archive.pipe(output);
+
+    // ✅ Append all files in the images folder
+    archive.directory(imagesDir, false);
+
+    // ✅ Finalize the archive
+    await archive.finalize();
+  } catch (err) {
+    console.error('❌ Error creating ZIP:', err);
+    res.status(500).json({ error: 'Internal server error while creating zip.' });
+  }
+});
+
+// ✅ Configure multer for file uploads
+const uploadx = multer({ dest: 'uploads/' }); // Temporary upload folder
+
+app.post('/aadhar/uploadZip', uploadx.single('zipfile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No zip file uploaded.' });
+    }
+
+    const zipPath = req.file.path; // Path of uploaded zip
+    const modifiedImagesDir = path.join(__dirname, 'modified_images');
+
+    // ✅ Ensure target folder exists
+    if (!fs.existsSync(modifiedImagesDir)) {
+      fs.mkdirSync(modifiedImagesDir, { recursive: true });
+    }
+
+    // ✅ Extract ZIP
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(modifiedImagesDir, true); // overwrite = true
+
+    // ✅ Delete the uploaded ZIP after extraction
+    fs.unlinkSync(zipPath);
+
+    // ✅ Get list of extracted files
+    const extractedFiles = fs.readdirSync(modifiedImagesDir);
+
+    res.json({
+      message: 'ZIP extracted successfully!',
+      extractedCount: extractedFiles.length,
+      files: extractedFiles
+    });
+  } catch (err) {
+    console.error('❌ Error extracting ZIP:', err);
+    res.status(500).json({ error: 'Internal server error while extracting ZIP.' });
+  }
+});
 
 ///////////////////////////////////////////
 //=======VLEHUB RECHARGE=================//

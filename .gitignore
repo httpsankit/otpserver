@@ -1,2 +1,6 @@
 node_modules
 chrome_user_data
+images
+modified_images
+.env
+Cookies

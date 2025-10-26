@@ -651,10 +651,10 @@ app.post('/aadhar/getAllPendingData', async (req, res) => {
 
 app.post('/aadhar/getDataWithImages', async (req, res) => {
   try {
-    const { id, username } = req.body;
+    const { sl_no } = req.body;
 
     // ✅ Validate input
-    if (!id || !username) {
+    if (!sl_no) {
       return res.status(400).json({ error: 'Missing required fields: id, username' });
     }
 
@@ -662,10 +662,9 @@ app.post('/aadhar/getDataWithImages', async (req, res) => {
     const query = `
       SELECT *
       FROM aadhardata
-      WHERE userid = $1 AND username = $2 AND status = 'processing'
-      ORDER BY createdat DESC;
+      WHERE sl_no = $1 and status = 'processing' 
     `;
-    const result = await pool.query(query, [id, username]);
+    const result = await pool.query(query, [sl_no]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'No processing Aadhar data found for this user.' });
@@ -678,7 +677,7 @@ app.post('/aadhar/getDataWithImages', async (req, res) => {
 
       imageFields.forEach((field) => {
         if (row[field]) {
-          const imagePath = path.join(__dirname, 'images', row[field]);
+          const imagePath = path.join(__dirname, 'modified_images', row[field]);
           try {
             if (fs.existsSync(imagePath)) {
               const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });

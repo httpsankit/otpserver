@@ -562,7 +562,7 @@ app.post('/aadhar/getDataWithImages', async (req, res) => {
 
       imageFields.forEach((field) => {
         if (row[field]) {
-          const imagePath = path.join(__dirname, 'modifies_images', row[field]);
+          const imagePath = path.join(__dirname, 'modified_images', row[field]);
           try {
             if (fs.existsSync(imagePath)) {
               const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });

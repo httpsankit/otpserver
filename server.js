@@ -994,6 +994,84 @@ app.post('/vlehub/recharge', async (req, res) => {
   }
 });
 
+app.post('/vlehub/createUser', async (req, res) => {
+  const clientVlehub = await vlehubPool.connect();
+
+  try {
+    const { name, email, mobile, password, processor_id } = req.body;
+
+    // ✅ Validate input
+    if (!name || !email || !mobile || !password || !processor_id) {
+      return res.status(400).json({
+        error: 'Missing required fields: name, email, mobile, password, processor_id'
+      });
+    }
+
+    const username = mobile; // username same as mobile
+
+    await clientVlehub.query('BEGIN');
+
+    // ✅ 1️⃣ Check if any of processor_id, username, mobile, or email already exist
+    const checkQuery = `
+      SELECT user_id FROM users
+      WHERE processor_id = $1 OR username = $2 OR mobile = $3 OR email = $4
+      LIMIT 1;
+    `;
+    const checkResult = await clientVlehub.query(checkQuery, [
+      processor_id,
+      username,
+      mobile,
+      email
+    ]);
+
+    if (checkResult.rowCount > 0) {
+      await clientVlehub.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'User already exists (duplicate processor_id, username, mobile, or email)'
+      });
+    }
+
+    // ✅ 2️⃣ Insert new user
+    const insertQuery = `
+      INSERT INTO users (
+        username, name, password, email, mobile, processor_id,
+        total_amount, used_amount, activate, distroy, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 0, 0, true, false, now(), now())
+      RETURNING user_id, username, name, email, mobile, processor_id, created_at;
+    `;
+
+    const insertResult = await clientVlehub.query(insertQuery, [
+      username,
+      name,
+      password,
+      email,
+      mobile,
+      processor_id
+    ]);
+
+    await clientVlehub.query('COMMIT');
+
+    const newUser = insertResult.rows[0];
+    console.log(`✅ New VLEHUB User Created: ${newUser.username}`);
+
+    res.json({
+      message: 'User created successfully',
+      user: newUser
+    });
+
+  } catch (err) {
+    console.error('❌ Error creating VLEHUB user:', err);
+    try {
+      await clientVlehub.query('ROLLBACK');
+    } catch (_) {}
+    res.status(500).json({ error: 'Internal server error while creating user' });
+  } finally {
+    clientVlehub.release();
+  }
+});
+
+
 // ===================== Health Check =====================
 app.get('/', (req, res) => res.send('OTP backend running 🚀'));
 

@@ -770,6 +770,85 @@ app.get('/aadhar/allImages', async (req, res) => {
   }
 });
 
+
+app.get('/aadhar/allImages/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    if (!id) {
+      return res.status(400).json({ error: 'ID param is required.' });
+    }
+
+    // ✅ Query to get all image paths from DB
+    const query = `
+      SELECT pic1path, pic2path, pic3path, pic4path, pic5path
+      FROM aadhardata
+      WHERE sl_no = $1
+      LIMIT 1
+    `;
+
+    const result = await db.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Record not found for this ID.' });
+    }
+
+    const row = result.rows[0];
+
+    // ✅ Filter only valid non-null paths
+    const picPaths = [
+      row.pic1path,
+      row.pic2path,
+      row.pic3path,
+      row.pic4path,
+      row.pic5path
+    ].filter(p => p && p.trim() !== "");
+
+    if (picPaths.length === 0) {
+      return res.status(404).json({ error: 'No image paths found.' });
+    }
+
+    // ✅ Create zip filename
+    const zipFileName = `aadhar_images_${id}_${Date.now()}.zip`;
+    const zipFilePath = path.join(__dirname, zipFileName);
+
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', () => {
+      console.log(`✅ ZIP created: ${zipFileName} (${archive.pointer()} bytes)`);
+
+      res.download(zipFilePath, zipFileName, (err) => {
+        fs.unlink(zipFilePath, () => {}); // delete temp zip
+        if (err) console.error('❌ Error sending file:', err);
+      });
+    });
+
+    archive.on('error', (err) => {
+      throw err;
+    });
+
+    archive.pipe(output);
+
+    // ✅ Add each image file into ZIP
+    for (const imgPath of picPaths) {
+      const absolutePath = path.join(__dirname, imgPath);
+
+      if (fs.existsSync(absolutePath)) {
+        archive.file(absolutePath, { name: path.basename(absolutePath) });
+      }
+    }
+
+    await archive.finalize();
+
+  } catch (err) {
+    console.error('❌ Error generating ZIP:', err);
+    res.status(500).json({ error: 'Internal server error while creating zip.' });
+  }
+});
+
+
+
 // ✅ Configure multer for file uploads
 const uploadx = multer({ dest: 'uploads/' }); // Temporary upload folder
 

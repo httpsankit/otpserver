@@ -787,7 +787,7 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
       LIMIT 1
     `;
 
-    const result = await db.query(query, [id]);
+    const result = await pool.query(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Record not found for this ID.' });

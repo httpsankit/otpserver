@@ -808,6 +808,16 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
       return res.status(404).json({ error: 'No image paths found.' });
     }
 
+    // ✅ Verify that at least one image actually exists
+    const existingPaths = picPaths.filter(imgPath => {
+      const absolutePath = path.join(__dirname, imgPath);
+      return fs.existsSync(absolutePath);
+    });
+
+    if (existingPaths.length === 0) {
+      return res.status(404).json({ error: 'No images found on disk.' });
+    }
+
     // ✅ Create zip filename
     const zipFileName = `aadhar_images_${id}_${Date.now()}.zip`;
     const zipFilePath = path.join(__dirname, zipFileName);
@@ -815,6 +825,7 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
     const output = fs.createWriteStream(zipFilePath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
+    // ✅✅ KEY FIX: Wait for 'close' event before sending response
     output.on('close', () => {
       console.log(`✅ ZIP created: ${zipFileName} (${archive.pointer()} bytes)`);
 
@@ -825,25 +836,36 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
     });
 
     archive.on('error', (err) => {
-      throw err;
+      console.error('❌ Archive error:', err);
+      res.status(500).json({ error: 'Error creating zip archive.' });
+    });
+
+    // ✅ Also handle output stream errors
+    output.on('error', (err) => {
+      console.error('❌ Output stream error:', err);
+      res.status(500).json({ error: 'Error writing zip file.' });
     });
 
     archive.pipe(output);
 
     // ✅ Add each image file into ZIP
-    for (const imgPath of picPaths) {
+    for (const imgPath of existingPaths) {
       const absolutePath = path.join(__dirname, imgPath);
-
-      if (fs.existsSync(absolutePath)) {
-        archive.file(absolutePath, { name: path.basename(absolutePath) });
-      }
+      archive.file(absolutePath, { name: path.basename(absolutePath) });
     }
 
+    // ✅ Finalize - but don't send response here!
     await archive.finalize();
+
+    // ❌ DON'T send response here - wait for 'close' event above
 
   } catch (err) {
     console.error('❌ Error generating ZIP:', err);
-    res.status(500).json({ error: 'Internal server error while creating zip.' });
+    
+    // Only send error response if headers haven't been sent yet
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error while creating zip.' });
+    }
   }
 });
 

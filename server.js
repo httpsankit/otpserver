@@ -40,9 +40,12 @@ const storage = multer.diskStorage({
     cb(null, imagesDir);
   },
   filename: function (req, file, cb) {
-    const userid = req.body.userid || 'user';
-    const ext = path.extname(file.originalname);
-    cb(null, `${userid}_${Date.now()}_${file.fieldname}${ext}`);
+      const userid = req.body.userid || "user";
+      const aadharno = req.body.aadharno || "aadhar";
+      const ext = path.extname(file.originalname);
+
+      const finalName = `${userid}_${aadharno}_${file.fieldname}${ext}`;
+      cb(null, finalName);
   }
 });
 const upload = multer({ storage });

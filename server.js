@@ -1211,9 +1211,9 @@ app.post('/vlehub/createUser', async (req, res) => {
       INSERT INTO users (
         username, name, password, email, mobile, processor_id,
         total_amount, used_amount, activate, distroy,
-        created_at, updated_at
+        created_at, updated_at,distributor_name,distributor_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 0, 0, true, false, now(), now())
+      VALUES ($1, $2, $3, $4, $5, $6, 0, 0, true, false, now(), now(), 'ankit', 1)
       RETURNING user_id, username, name, email, mobile, processor_id, created_at;
     `;
 

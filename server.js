@@ -916,7 +916,7 @@ app.post('/aadhar/uploadZip', uploadx.single('zipfile'), async (req, res) => {
 
 
 app.post('/aadhar/reject', async (req, res) => {
-  const { sl_no } = req.body;
+  const { sl_no,msg } = req.body;
 
   if (!sl_no) {
     return res.status(400).json({ error: 'sl_no is required' });
@@ -953,8 +953,10 @@ app.post('/aadhar/reject', async (req, res) => {
 
     // 3️⃣ Update aadhardata -> status = 'Reject'
     await client.query(
-      `UPDATE aadhardata SET status = 'Reject' WHERE sl_no = $1`,
-      [sl_no]
+      `UPDATE aadhardata 
+       SET status = 'Reject', remarks = $1 
+       WHERE sl_no = $2`,
+      [msg, sl_no]
     );
 
     // 4️⃣ Refund balance to user

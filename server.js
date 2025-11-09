@@ -792,7 +792,8 @@ app.get('/aadhar/allImagesFiltered', async (req, res) => {
     result.rows.forEach(row => {
       for (let i = 1; i <= 5; i++) {
         if (row[`pic${i}path`]) {
-          imagePaths.push(path.join(__dirname, row[`pic${i}path`]));
+          // Assuming pic paths are relative to a known directory, e.g., 'images'
+          imagePaths.push(path.join(__dirname, 'images', row[`pic${i}path`]));
         }
       }
     });
@@ -800,6 +801,17 @@ app.get('/aadhar/allImagesFiltered', async (req, res) => {
     if (imagePaths.length === 0) {
       return res.status(404).json({ error: 'No images found for "processing" records.' });
     }
+
+    // Create a temporary folder
+    const tempDir = fs.mkdtempSync(path.join(__dirname, 'temp-'));
+
+    // Copy images to the temporary folder
+    imagePaths.forEach(imagePath => {
+      if (fs.existsSync(imagePath)) {
+        const fileName = path.basename(imagePath);
+        fs.copyFileSync(imagePath, path.join(tempDir, fileName));
+      }
+    });
 
     // ✅ Create a zip filename
     const zipFileName = `aadhar_images_processing_${Date.now()}.zip`;
@@ -814,8 +826,9 @@ app.get('/aadhar/allImagesFiltered', async (req, res) => {
 
       // ✅ Send the zip file for download
       res.download(zipFilePath, zipFileName, (err) => {
-        // Delete the temporary zip file after sending
+        // Delete the temporary zip file and folder after sending
         fs.unlink(zipFilePath, () => {});
+        fs.rm(tempDir, { recursive: true, force: true }, () => {});
         if (err) {
           console.error('❌ Error sending zip:', err);
         }

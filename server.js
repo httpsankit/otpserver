@@ -773,6 +773,77 @@ app.get('/aadhar/allImages', async (req, res) => {
   }
 });
 
+app.get('/aadhar/allImagesFiltered', async (req, res) => {
+  try {
+    // ✅ Query to get all image paths from DB for 'processing' status
+    const query = `
+      SELECT pic1path, pic2path, pic3path, pic4path, pic5path
+      FROM aadhardata
+      WHERE status = 'processing'
+    `;
+
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No records with "processing" status found.' });
+    }
+
+    const imagePaths = [];
+    result.rows.forEach(row => {
+      for (let i = 1; i <= 5; i++) {
+        if (row[`pic${i}path`]) {
+          imagePaths.push(path.join(__dirname, row[`pic${i}path`]));
+        }
+      }
+    });
+
+    if (imagePaths.length === 0) {
+      return res.status(404).json({ error: 'No images found for "processing" records.' });
+    }
+
+    // ✅ Create a zip filename
+    const zipFileName = `aadhar_images_processing_${Date.now()}.zip`;
+    const zipFilePath = path.join(__dirname, zipFileName);
+
+    // ✅ Create zip archive
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', () => {
+      console.log(`✅ Created ZIP: ${zipFileName} (${archive.pointer()} total bytes)`);
+
+      // ✅ Send the zip file for download
+      res.download(zipFilePath, zipFileName, (err) => {
+        // Delete the temporary zip file after sending
+        fs.unlink(zipFilePath, () => {});
+        if (err) {
+          console.error('❌ Error sending zip:', err);
+        }
+      });
+    });
+
+    archive.on('error', (err) => {
+      throw err;
+    });
+
+    // ✅ Pipe archive data to the file
+    archive.pipe(output);
+
+    // ✅ Append each image to the archive
+    imagePaths.forEach(imagePath => {
+      if (fs.existsSync(imagePath)) {
+        archive.file(imagePath, { name: path.basename(imagePath) });
+      }
+    });
+
+    // ✅ Finalize the archive
+    await archive.finalize();
+  } catch (err) {
+    console.error('❌ Error creating filtered ZIP:', err);
+    res.status(500).json({ error: 'Internal server error while creating filtered zip.' });
+  }
+});
+
 
 app.get('/aadhar/allImages/:id', async (req, res) => {
   try {

@@ -866,7 +866,7 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
       return res.status(400).json({ error: 'ID param is required.' });
     }
 
-    // ✅ Query to get all image paths from DB
+    // ✅ Query to get all image paths from DB for the given ID
     const query = `
       SELECT pic1path, pic2path, pic3path, pic4path, pic5path
       FROM aadhardata
@@ -881,78 +881,65 @@ app.get('/aadhar/allImages/:id', async (req, res) => {
     }
 
     const row = result.rows[0];
-
-    // ✅ Filter only valid non-null paths
-    const picPaths = [
-      row.pic1path,
-      row.pic2path,
-      row.pic3path,
-      row.pic4path,
-      row.pic5path
-    ].filter(p => p && p.trim() !== "");
-
-    if (picPaths.length === 0) {
-      return res.status(404).json({ error: 'No image paths found.' });
+    const imagePaths = [];
+    for (let i = 1; i <= 5; i++) {
+      if (row[`pic${i}path`]) {
+        imagePaths.push(path.join(__dirname, 'images', row[`pic${i}path`]));
+      }
     }
 
-    // ✅ Verify that at least one image actually exists
-    const existingPaths = picPaths.filter(imgPath => {
-      const absolutePath = path.join(__dirname, imgPath);
-      return fs.existsSync(absolutePath);
+    if (imagePaths.length === 0) {
+      return res.status(404).json({ error: 'No images found for this record.' });
+    }
+
+    // Create a temporary folder
+    const tempDir = fs.mkdtempSync(path.join(__dirname, 'temp-'));
+
+    // Copy images to the temporary folder
+    imagePaths.forEach(imagePath => {
+      if (fs.existsSync(imagePath)) {
+        const fileName = path.basename(imagePath);
+        fs.copyFileSync(imagePath, path.join(tempDir, fileName));
+      }
     });
 
-    if (existingPaths.length === 0) {
-      return res.status(404).json({ error: 'No images found on disk.' });
-    }
-
-    // ✅ Create zip filename
+    // ✅ Create a zip filename
     const zipFileName = `aadhar_images_${id}_${Date.now()}.zip`;
     const zipFilePath = path.join(__dirname, zipFileName);
 
+    // ✅ Create zip archive
     const output = fs.createWriteStream(zipFilePath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
-    // ✅✅ KEY FIX: Wait for 'close' event before sending response
     output.on('close', () => {
-      console.log(`✅ ZIP created: ${zipFileName} (${archive.pointer()} bytes)`);
+      console.log(`✅ Created ZIP: ${zipFileName} (${archive.pointer()} total bytes)`);
 
+      // ✅ Send the zip file for download
       res.download(zipFilePath, zipFileName, (err) => {
-        fs.unlink(zipFilePath, () => {}); // delete temp zip
-        if (err) console.error('❌ Error sending file:', err);
+        // Delete the temporary zip file and folder after sending
+        fs.unlink(zipFilePath, () => {});
+        fs.rm(tempDir, { recursive: true, force: true }, () => {});
+        if (err) {
+          console.error('❌ Error sending zip:', err);
+        }
       });
     });
 
     archive.on('error', (err) => {
-      console.error('❌ Archive error:', err);
-      res.status(500).json({ error: 'Error creating zip archive.' });
+      throw err;
     });
 
-    // ✅ Also handle output stream errors
-    output.on('error', (err) => {
-      console.error('❌ Output stream error:', err);
-      res.status(500).json({ error: 'Error writing zip file.' });
-    });
-
+    // ✅ Pipe archive data to the file
     archive.pipe(output);
 
-    // ✅ Add each image file into ZIP
-    for (const imgPath of existingPaths) {
-      const absolutePath = path.join(__dirname, imgPath);
-      archive.file(absolutePath, { name: path.basename(absolutePath) });
-    }
+    // ✅ Append all files in the temp folder
+    archive.directory(tempDir, false);
 
-    // ✅ Finalize - but don't send response here!
+    // ✅ Finalize the archive
     await archive.finalize();
-
-    // ❌ DON'T send response here - wait for 'close' event above
-
   } catch (err) {
-    console.error('❌ Error generating ZIP:', err);
-    
-    // Only send error response if headers haven't been sent yet
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error while creating zip.' });
-    }
+    console.error('❌ Error creating ZIP for ID:', err);
+    res.status(500).json({ error: 'Internal server error while creating zip.' });
   }
 });
 

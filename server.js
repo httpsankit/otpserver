@@ -1025,7 +1025,7 @@ app.post('/aadhar/reject', async (req, res) => {
     // 3️⃣ Update aadhardata -> status = 'Reject'
     await client.query(
       `UPDATE aadhardata 
-       SET status = 'Reject', remarks = $1 
+       SET status = 'Reject', updatedat = NOW() AT TIME ZONE 'Asia/Kolkata', remarks = $1 
        WHERE sl_no = $2`,
       [msg, sl_no]
     );
@@ -1063,7 +1063,11 @@ app.post('/aadhar/markSuccess', async (req, res) => {
   }
 
   try {
-    const query = `UPDATE aadhardata SET status = 'Success' WHERE sl_no = $1`;
+    const query = `UPDATE aadhardata 
+SET 
+  status = 'Success',
+  updatedat = NOW() AT TIME ZONE 'Asia/Kolkata'
+WHERE sl_no = $1;`;
     const result = await pool.query(query, [sl_no]);
 
     if (result.rowCount === 0) {
@@ -1451,3 +1455,4 @@ app.get('/', (req, res) => res.send('OTP backend running 🚀'));
 
 // ===================== Start Server =====================
 app.listen(4000, () => console.log('🚀 Server running on port 4000'));
+

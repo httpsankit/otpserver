@@ -1170,6 +1170,134 @@ app.post('/vlehub/recharge', async (req, res) => {
     clientVlehub.release();
   }
 });
+app.get('/bios/upi/qrcode', (req, res) => {
+  try {
+    // Path to qr.png in root folder
+    const imagePath = path.join(__dirname, 'qr.png');
+
+    // Check file exists
+    if (!fs.existsSync(imagePath)) {
+      return res.status(404).json({ error: 'qr.png not found in root directory' });
+    }
+
+    // Read file → Base64
+    const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+
+    // Prepare final Base64 data URL
+    const base64Image = `data:image/png;base64,${imageData}`;
+
+    // Send response
+    res.json({
+      message: "QR loaded successfully",
+      base64_qr: base64Image
+    });
+
+  } catch (err) {
+    console.error("❌ Error reading QR:", err);
+    res.status(500).json({ error: "Internal server error while reading QR image" });
+  }
+});
+
+app.post('/bios/bios_device_info', async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const {
+      whatsapp,
+      smbiosbiosversion,
+      manufacturer,
+      name,
+      serialnumber,
+      version,
+      hddid,
+      username,
+      o_smbiosbiosversion,
+      o_manufacturer,
+      o_name,
+      o_serialnumber,
+      o_version,
+      utr
+    } = req.body;
+
+    if (
+      !whatsapp || !smbiosbiosversion || !manufacturer || !name || !serialnumber ||
+      !version || !hddid || !username || !o_smbiosbiosversion || !o_manufacturer ||
+      !o_name || !o_serialnumber || !o_version || !utr
+    ) {
+      return res.status(400).json({ error: "Missing required fields", message: "Missing required fields" });
+    }
+
+    // 🔥 IMPORTANT: use client.query(), not pool.query()
+    await client.query("BEGIN");
+
+    // Check UTR
+    const checkUTR = `
+      SELECT amount, utrno, isused 
+      FROM liveamount
+      WHERE utrno = $1 AND isused = false AND amount = '100'
+      LIMIT 1;
+    `;
+    const utrResult = await client.query(checkUTR, [utr]);
+
+    if (utrResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Invalid or used UTR", message: "Invalid or used UTR" });
+    }
+
+    const txnAmount = utrResult.rows[0].amount;
+
+    // Insert BIOS info
+    const insertQuery = `
+      INSERT INTO bios_device_info (
+        whatsapp, smbiosbiosversion, manufacturer, "name", serialnumber, "version",
+        hddid, username, o_smbiosbiosversion, o_manufacturer, o_name,
+        o_serialnumber, o_version, utr
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      RETURNING sl_no, createdat;
+    `;
+    const insertRes = await client.query(insertQuery, [
+      whatsapp, smbiosbiosversion, manufacturer, name,
+      serialnumber, version, hddid, username,
+      o_smbiosbiosversion, o_manufacturer, o_name,
+      o_serialnumber, o_version, utr
+    ]);
+
+    // Mark UTR as used
+    await client.query(
+      `UPDATE liveamount SET isused = true, updatedat = now() WHERE utrno = $1`,
+      [utr]
+    );
+
+    await client.query("COMMIT");
+
+    const finalResp =
+      `#pragma namespace("\\\\\\\\.\\\\root\\\\CIMV2") ` +
+      `class Win32_BIOS { [key] string SMBIOSBIOSVersion; string Manufacturer; string Name; string SerialNumber; string Version; }; ` +
+      `instance of Win32_BIOS { ` +
+      `SMBIOSBIOSVersion = "${smbiosbiosversion}"; ` +
+      `Manufacturer = "${manufacturer}"; ` +
+      `Name = "${name}"; ` +
+      `SerialNumber = "${serialnumber}"; ` +
+      `Version = "${version}"; };`;
+
+    res.json({
+      message: "BIOS Updated Successfully !!!",
+      sl_no: insertRes.rows[0].sl_no,
+      utr_amount: txnAmount,
+      finalResp
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("❌ BIOS Error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release(); // ✅ Correct now
+  }
+});
+
+
 
 // app.post('/vlehub/createUser', async (req, res) => {
 //   const clientVlehub = await vlehubPool.connect();

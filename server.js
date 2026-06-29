@@ -122,16 +122,16 @@ app.post('/setTrue', async (req, res) => {
 
 // ===================== Live Amount Endpoint =====================
 app.post('/aadhar/liveamount', async (req, res) => {
-  const { amount, utrno, txndate } = req.body;
+  const { amount, utrno, txndate, notes } = req.body;
   if (!amount || !utrno || !txndate) return res.status(400).json({ error: 'Missing fields' });
 
   try {
     const query = `
-      INSERT INTO liveamount (amount, utrno, txndate)
-      VALUES ($1, $2, $3)
+      INSERT INTO liveamount (amount, utrno, txndate, notes)
+      VALUES ($1, $2, $3, $4)
       RETURNING *;
     `;
-    const result = await pool.query(query, [amount, utrno, txndate]);
+    const result = await pool.query(query, [amount, utrno, txndate, notes]);
     console.log(`💸 Live amount added: ₹${amount}, UTR: ${utrno}`);
     res.json({ message: 'Live amount saved', data: result.rows[0] });
   } catch (err) {

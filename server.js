@@ -140,6 +140,43 @@ app.post('/aadhar/liveamount', async (req, res) => {
   }
 });
 
+// ===================== UPI Payment - Check Status =====================
+app.post('/upi_payment/check_status', async (req, res) => {
+  try {
+    const { notes } = req.body;
+
+    // ✅ Validate input
+    if (!notes) {
+      return res.status(400).json({ error: 'Missing required field: notes' });
+    }
+
+    // ✅ Query upi_amount table by notes
+    const query = `
+      SELECT *
+      FROM upi_amount
+      WHERE notes = $1
+      ORDER BY created_at DESC;
+    `;
+    const result = await pool.query(query, [notes]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'No UPI transaction found for given notes' });
+    }
+
+    console.log(`📩 UPI status fetched for notes: ${notes}, count: ${result.rowCount}`);
+
+    res.json({
+      message: 'UPI transaction data fetched successfully',
+      count: result.rowCount,
+      data: result.rows
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching UPI status:', err);
+    res.status(500).json({ error: 'Internal server error while fetching UPI status' });
+  }
+});
+
 // ===================== Aadhar Save Data (with balance check + image upload) =====================
 app.post('/aadhar/saveData', upload.fields([
   { name: 'pic1', maxCount: 1 },

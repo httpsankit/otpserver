@@ -1277,7 +1277,7 @@ app.post('/bios/bios_device_info', async (req, res) => {
     const checkUTR = `
       SELECT amount, utrno, isused 
       FROM liveamount
-      WHERE utrno = $1 AND isused = false AND amount = '100'
+      WHERE utrno = $1 AND isused = false AND amount = '2000'
       LIMIT 1;
     `;
     const utrResult = await client.query(checkUTR, [utr]);

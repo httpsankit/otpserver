@@ -354,6 +354,120 @@ app.get('/aadhar/getmsgaadhar', async (req, res) => {
   }
 });
 
+// gapy scrapper 
+
+const { parse } = require('csv-parse/sync');
+
+// ✅ Multer config for CSV upload (memory storage - no need to save file to disk)
+const uploadCsv = multer({ storage: multer.memoryStorage() });
+
+// ===================== GPay Scraper - CSV Upload & Upsert =====================
+app.post('/gpay/scrapper', uploadCsv.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Missing CSV file (field name: file)' });
+  }
+
+  let records;
+  try {
+    records = parse(req.file.buffer, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    });
+  } catch (err) {
+    console.error('❌ CSV parse error:', err);
+    return res.status(400).json({ error: 'Invalid CSV file', details: err.message });
+  }
+
+  if (records.length === 0) {
+    return res.status(400).json({ error: 'CSV file has no data rows' });
+  }
+
+  const client = await pool.connect();
+  let inserted = 0;
+  let updated = 0;
+  const errors = [];
+
+  try {
+    await client.query('BEGIN');
+
+    const upsertQuery = `
+      INSERT INTO upi_amount (
+        payer, paid_via, payment_type, creation_time, transaction_id,
+        amount, processing_fee, net_amount, status, update_time, notes, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+      ON CONFLICT (transaction_id) DO UPDATE SET
+        payer          = EXCLUDED.payer,
+        paid_via       = EXCLUDED.paid_via,
+        payment_type   = EXCLUDED.payment_type,
+        creation_time  = EXCLUDED.creation_time,
+        amount         = EXCLUDED.amount,
+        processing_fee = EXCLUDED.processing_fee,
+        net_amount     = EXCLUDED.net_amount,
+        status         = EXCLUDED.status,
+        update_time    = EXCLUDED.update_time,
+        notes          = EXCLUDED.notes,
+        updated_at     = now()
+      RETURNING (xmax = 0) AS inserted;
+    `;
+
+    for (const row of records) {
+      const transactionId = row['Transaction ID']?.trim();
+      if (!transactionId) {
+        errors.push({ row, reason: 'Missing Transaction ID' });
+        continue;
+      }
+
+      const creationTime = row['Creation time'] ? new Date(row['Creation time']) : null;
+      const updateTime = row['Update time'] ? new Date(row['Update time']) : null;
+
+      const values = [
+        row['Payer'] || null,
+        row['Paid via'] || null,
+        row['Type (UPI / UPI CC)'] || null,
+        creationTime && !isNaN(creationTime) ? creationTime : null,
+        transactionId,
+        row['Amount'] ? parseFloat(row['Amount']) : null,
+        row['Processing Fee'] ? parseFloat(row['Processing Fee']) : null,
+        row['Net Amount'] ? parseFloat(row['Net Amount']) : null,
+        row['Status'] || null,
+        updateTime && !isNaN(updateTime) ? updateTime : null,
+        row['Notes'] || null
+      ];
+
+      const result = await client.query(upsertQuery, values);
+      if (result.rows[0].inserted) {
+        inserted++;
+      } else {
+        updated++;
+      }
+    }
+
+    await client.query('COMMIT');
+
+    console.log(`✅ GPay CSV synced — inserted: ${inserted}, updated: ${updated}, errors: ${errors.length}`);
+
+    res.json({
+      message: 'CSV processed successfully',
+      total_rows: records.length,
+      inserted,
+      updated,
+      skipped: errors.length,
+      errors: errors.length ? errors : undefined
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ GPay Scraper Error:', err);
+    res.status(500).json({ error: 'Internal server error while processing CSV', details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+
 // ===================== Get Aadhar Data (by userid and username) =====================
 app.post('/aadhar/getDataAadhar', async (req, res) => {
   try {

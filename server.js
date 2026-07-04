@@ -1240,6 +1240,7 @@ app.get('/bios/upi/qrcode', (req, res) => {
 });
 
 app.post('/bios/bios_device_info', async (req, res) => {
+  console.log("hit bios api");
   const client = await pool.connect();
 
   try {
@@ -1260,6 +1261,7 @@ app.post('/bios/bios_device_info', async (req, res) => {
       utr
     } = req.body;
 
+    console.log(JSON.stringify(req.body));
     if (
       !whatsapp || !smbiosbiosversion || !manufacturer || !name || !serialnumber ||
       !version || !hddid || !username || !o_smbiosbiosversion || !o_manufacturer ||

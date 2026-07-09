@@ -22,10 +22,10 @@ const pool = new Pool({
 
 // ✅ Additional PostgreSQL connection for VLEHUB (kanak_kanak DB)
 const vlehubPool = new Pool({
-  host: 'osk.domcloud.co',
-  user: 'kanak',
-  password: 'dY+rNW4e2(Vz41Ch2+',
-  database: 'kanak_kanak',
+  host: 'aws-0-ap-southeast-2.pooler.supabase.com',
+  user: 'postgres.iplxmklpnpyyirvdvlvo',
+  password: 'K@kanak!@34',
+  database: 'postgres',
   port: 5432, // default PostgreSQL port
 });
 
